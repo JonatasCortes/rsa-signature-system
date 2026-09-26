@@ -39,13 +39,13 @@ def is_probable_prime(candidate: int, rounds: int = 50) -> bool:
     for _ in range(rounds):
         testimony = random.choice(range(2, candidate-1))
 
-        initial_residue = testimony**odd_component % candidate
+        initial_residue = pow(testimony, odd_component, candidate)
         if initial_residue == candidate - 1 or initial_residue == 1:
             continue
 
         passed = True
         for _ in range(divisions_count-1):
-            initial_residue = initial_residue ** 2
+            initial_residue = pow(initial_residue, 2, candidate)
             if initial_residue == candidate - 1:
                 continue
             passed = False
@@ -79,6 +79,10 @@ def generate_prime_number(bit_length: int, max_attempts: int = 100) -> int:
         PrimeGenerationError: If `bit_length` is less than 128, or if no prime 
             is found within the maximum number of attempts (`max_attempts`).
     """
+
+    if bit_length < 128:
+        error_message = f"Unable to generate prime number with bit length under 128"
+        raise PrimeGenerationError(error_message)
 
     for _ in range(max_attempts):
         random.choice((1, 0))
