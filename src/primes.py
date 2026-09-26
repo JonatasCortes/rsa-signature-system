@@ -22,7 +22,40 @@ def is_probable_prime(candidate: int, rounds: int = 50) -> bool:
     Raises:
         PrimeGenerationError: If `rounds` > `candidate` - 3.
     """
-    ...
+    if rounds > candidate - 3:
+        error_message = f"rounds must be lower than or equal to (candidate-3)."
+        raise PrimeGenerationError(error_message)
+
+    if candidate % 2 == 0:
+        return False
+
+    odd_component = candidate - 1
+    divisions_count = 0
+
+    while odd_component % 2 == 0:
+        odd_component //= 2
+        divisions_count += 1
+
+    for _ in range(rounds):
+        testimony = random.choice(range(2, candidate-1))
+
+        initial_residue = testimony**odd_component % candidate
+        if initial_residue == candidate - 1 or initial_residue == 1:
+            continue
+
+        passed = True
+        for _ in range(divisions_count-1):
+            initial_residue = initial_residue ** 2
+            if initial_residue == candidate - 1:
+                continue
+            passed = False
+
+        if passed:
+            continue
+
+        return False
+
+    return True
 
 
 def generate_prime_number(bit_length: int, max_attempts: int = 100) -> int:
