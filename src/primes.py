@@ -85,18 +85,14 @@ def generate_prime_number(bit_length: int, max_attempts: int = 100) -> int:
         raise PrimeGenerationError(error_message)
 
     for _ in range(max_attempts):
-        random.choice((1, 0))
-        random_odd_binary_string = "1"
-
-        for _ in range(bit_length-2):
-            random_odd_binary_string += random.choice(("1", "0"))
-
-        random_odd_binary_string += "1"
-
-        random_odd = int(random_odd_binary_string, 2)
+        random_odd = _generate_random_odd_number(bit_length)
 
         if is_probable_prime(random_odd):
             return random_odd
 
     error_message = f"Unable to generate prime number within {max_attempts} attempts"
     raise PrimeGenerationError(error_message)
+
+
+def _generate_random_odd_number(bit_length: int) -> int:
+    return random.randrange(1 << (bit_length - 1), 1 << bit_length) | 1
