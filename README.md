@@ -7,7 +7,7 @@ python -m venv .venv
 ```
 
 ```Bash
-.\venv\Scripts\activate # Windows
+.\.venv\Scripts\activate # Windows
 
 source .venv/bin/activate # Linux / Mac
 ```
