@@ -1,4 +1,4 @@
-import random
+import secrets
 from src.exceptions import PrimeGenerationError
 
 
@@ -65,7 +65,7 @@ def is_probable_prime(candidate: int, rounds: int = 50) -> bool:
 
     for _ in range(rounds):
 
-        witness = random.randrange(2, candidate - 1)
+        witness = secrets.randbelow(candidate - 3) + 2
         initial_residue = pow(witness, odd_component, candidate)
 
         if initial_residue in (1, candidate-1):
@@ -113,4 +113,6 @@ def _has_non_trivial_sqrt_of_one(candidate: int, initial_residue: int, factors_o
 
 
 def _generate_random_odd_number(bit_length: int) -> int:
-    return random.randrange(1 << (bit_length - 1), 1 << bit_length) | 1
+    lower_bound = 1 << (bit_length - 1)
+    candidate_range = 1 << (bit_length - 1)
+    return lower_bound + (secrets.randbelow(candidate_range) | 1)
