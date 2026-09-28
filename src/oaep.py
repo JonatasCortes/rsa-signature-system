@@ -1,3 +1,19 @@
+"""
+RSA-OAEP Encryption and Decryption Scheme.
+
+This module implements the Optimal Asymmetric Encryption Padding (OAEP) scheme
+combined with textbook RSA, using SHA3-256 as the underlying hash function
+and MGF1 for mask generation.
+
+OAEP provides semantic security by ensuring that encryption is probabilistic
+(the same message yields different ciphertexts) and resistant to chosen-ciphertext
+attacks through strict padding and label validation.
+
+Functions:
+    rsa_oaep_encrypt: Encrypts a short message using public key RSA-OAEP.
+    rsa_oaep_decrypt: Decrypts and validates an RSA-OAEP ciphertext using private key.
+"""
+
 from hashlib import sha3_256
 import secrets
 from src.domain import RSAPrivateKey, RSAPublicKey
