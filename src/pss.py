@@ -20,21 +20,24 @@ def rsa_pss_sign(
 	private_key: RSAPrivateKey,
 	salt_length: int = _HASH_LENGTH,
 ) -> str:
-	"""Generate an RSA-PSS signature for ``message``.
+	"""
+	Generate an RSA-PSS digital signature for the given message.
 
-	SHA3-256 is used for both message hashing and MGF1. The signature is
-	returned as Base64 containing exactly one RSA modulus-sized byte string.
+	Computes the SHA3-256 hash of the message, applies probabilistic padding
+	(PSS) using MGF1 and a secure random salt, and signs the resulting block
+	with the private key. The final signature is returned as a Base64-encoded string.
 
 	Args:
-		message: The bytes to sign.
-		private_key: The RSA private key used for signing.
-		salt_length: The salt length in bytes. Defaults to 32 bytes.
+		message (bytes): The message content to be signed.
+		private_key (RSAPrivateKey): The signer's private key.
+		salt_length (int, optional): The length of the random salt in bytes.
+			Defaults to 32, matching the SHA3-256 digest length.
 
 	Returns:
-		A Base64-encoded RSA-PSS signature.
+		str: The digital signature represented as a Base64 string.
 
 	Raises:
-		RSASystemError: If the key, message, salt length, or modulus is invalid.
+		RSASystemError: If signing fails due to invalid parameters.
 	"""
 	_validate_message(message)
 	_validate_salt_length(salt_length)
@@ -57,24 +60,25 @@ def rsa_pss_verify(
 	public_key: RSAPublicKey,
 	salt_length: int = _HASH_LENGTH,
 ) -> bool:
-	"""Verify an RSA-PSS signature for ``message``.
+	"""
+	Verify an RSA-PSS digital signature against a message and public key.
 
-	The encoded message uses ``emBits = modulus_bits - 1`` as required by
-	RFC 8017. This reserves the most significant bit of the encoded block;
-	therefore, ``encoded_length`` is based on ``emBits`` rather than simply
-	the byte length of the modulus.
+    Decodes the Base64 signature, applies the RSA public key operation, 
+    and validates the PSS padding structure, salt, and message hash.
 
-	Args:
-		message: The original bytes that were signed.
-		signature: The Base64-encoded RSA-PSS signature.
-		public_key: The RSA public key used for verification.
-		salt_length: The expected salt length in bytes. Defaults to 32 bytes.
+    Args:
+        message (bytes): The original message whose signature is being verified.
+        signature (str): The Base64-encoded digital signature.
+        public_key (RSAPublicKey): The signer's public key.
+        salt_length (int, optional): The length of the salt used during signing.
+            Defaults to 32.
 
-	Returns:
-		``True`` when the signature is valid.
+    Returns:
+        bool: True if the signature is valid and authentic, False otherwise.
 
-	Raises:
-		PSSVerificationError: If the signature, key, or PSS encoding is invalid.
+    Raises:
+        PSSVerificationError: If the signature structure is malformed or invalid.
+            (Defined in src.exceptions).
 	"""
 	try:
 		_validate_message(message)
