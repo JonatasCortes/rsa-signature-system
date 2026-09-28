@@ -1,14 +1,11 @@
 from hashlib import sha3_256
 import secrets
 from src.domain import RSAPrivateKey, RSAPublicKey
+from src.hashing import mask_generation_function
 from src.exceptions import MessageTooLongError
 
 
-def rsa_oaep_encrypt(
-    message: bytes,
-    public_key: RSAPublicKey,
-    label: bytes = b"",
-) -> bytes:
+def rsa_oaep_encrypt(message: bytes, public_key: RSAPublicKey, label: bytes = b"") -> bytes:
     """Encrypt a short message with RSA-OAEP, using the given public key.
 
     Pads the message using the OAEP scheme before applying the RSA encryption
@@ -31,19 +28,33 @@ def rsa_oaep_encrypt(
         MessageTooLongError: If message does not fit the OAEP padding structure
           for the given key size.
     """
-    modulus_byte_len = calculate_modulus_byte_length(public_key)
+    modulus_byte_len = _calculate_modulus_byte_length(public_key)
     hash_output_len = sha3_256().digest_size
+    data_block_len = modulus_byte_len - hash_output_len - 1
 
-    validate_message_length(message, modulus_byte_len, hash_output_len)
+    _validate_message_length(message, modulus_byte_len, hash_output_len)
 
     label_hash = sha3_256(label).digest()
+    data_block = _assemble_data_block(label_hash, message, data_block_len)
+
+    seed = secrets.token_bytes(hash_output_len)
+    masked_data_block = _mask_data(data_block, seed, len(data_block))
+    masked_seed = _mask_data(seed, masked_data_block, hash_output_len)
+
+    encoded_message = b'\x00' + masked_seed + masked_data_block
+    integer_encoded_message = int.from_bytes(encoded_message, byteorder="big")
+
+    integer_ciphertext = pow(
+        integer_encoded_message,
+        public_key.public_exponent,
+        public_key.modulus
+    )
+    ciphertext = integer_ciphertext.to_bytes(modulus_byte_len, byteorder="big")
+
+    return ciphertext
 
 
-def rsa_oaep_decrypt(
-    ciphertext: bytes,
-    private_key: RSAPrivateKey,
-    label: bytes = b"",
-) -> bytes:
+def rsa_oaep_decrypt(ciphertext: bytes, private_key: RSAPrivateKey, label: bytes = b"",) -> bytes:
     """Decrypt an RSA-OAEP ciphertext, using the given private key.
 
     Reverses the RSA encryption operation and validates the resulting OAEP
@@ -65,13 +76,27 @@ def rsa_oaep_decrypt(
     ...
 
 
-def calculate_modulus_byte_length(key: RSAPrivateKey | RSAPublicKey) -> int:
+# ========================== *
+# PRIVATE AUXILIAR FUNCTIONS *
+# ========================== *
+
+def _calculate_modulus_byte_length(key: RSAPrivateKey | RSAPublicKey) -> int:
     bits = key.modulus.bit_length()
     return (bits + 7) // 8
 
 
-def validate_message_length(message: bytes, modulus_byte_len: int, hash_output_len: int) -> None:
+def _validate_message_length(message: bytes, modulus_byte_len: int, hash_output_len: int) -> None:
     max_length = modulus_byte_len - (2 * hash_output_len) - 2
     if len(message) > max_length:
         error_message = f"message length ({len(message)}) exceeded maximum ({max_length})"
         raise MessageTooLongError(error_message)
+
+
+def _assemble_data_block(label_hash: bytes, message: bytes, data_block_len: int) -> bytes:
+    padding_len = data_block_len - len(label_hash + b'\x01' + message)
+    return label_hash + padding_len*b'\x00' + b'\x01' + message
+
+
+def _mask_data(data: bytes, mask_seed: bytes, mask_length: int):
+    mask = mask_generation_function(mask_seed, mask_length)
+    return bytes(b1 ^ b2 for b1, b2 in zip(data, mask))
