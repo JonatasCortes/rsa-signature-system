@@ -1,7 +1,6 @@
 """RSA-PSS digital signatures using SHA3-256 and MGF1."""
 
 import base64
-import binascii
 import hmac
 import secrets
 from hashlib import sha3_256

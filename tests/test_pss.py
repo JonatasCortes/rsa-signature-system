@@ -2,7 +2,8 @@ import base64
 
 import pytest
 
-from src.exceptions import PSSVerificationError
+from src.domain import RSAPrivateKey
+from src.exceptions import PSSVerificationError, RSASystemError
 from src.keys import generate_key_pair
 from src.pss import rsa_pss_sign, rsa_pss_verify
 
@@ -32,6 +33,40 @@ def test_rsa_pss_signatures_are_probabilistic(rsa_keys):
 	second_signature = rsa_pss_sign(message, private_key)
 
 	assert first_signature != second_signature
+
+
+def test_rsa_pss_supports_custom_salt_length(rsa_keys):
+	"""A signature verifies when both sides use a custom salt length."""
+	public_key, private_key = rsa_keys
+	message = b"RSA-PSS with a custom salt length."
+
+	signature = rsa_pss_sign(message, private_key, salt_length=16)
+
+	assert rsa_pss_verify(message, signature, public_key, salt_length=16)
+
+
+def test_rsa_pss_rejects_mismatched_salt_length(rsa_keys):
+	"""Verification fails when the expected salt length differs from signing."""
+	public_key, private_key = rsa_keys
+	message = b"The salt length is part of the verification parameters."
+	signature = rsa_pss_sign(message, private_key, salt_length=16)
+
+	with pytest.raises(PSSVerificationError):
+		rsa_pss_verify(message, signature, public_key, salt_length=32)
+
+
+def test_rsa_pss_rejects_modulus_that_is_too_small():
+	"""Signing fails when the modulus cannot fit the default PSS encoding."""
+	private_key = RSAPrivateKey(
+		modulus=1 << 511,
+		public_exponent=65537,
+		private_exponent=1,
+		first_prime=3,
+		second_prime=5,
+	)
+
+	with pytest.raises(RSASystemError):
+		rsa_pss_sign(b"message", private_key)
 
 
 def test_rsa_pss_rejects_modified_message(rsa_keys):
