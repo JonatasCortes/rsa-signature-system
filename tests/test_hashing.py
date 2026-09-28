@@ -25,15 +25,15 @@ def test_mask_generation_function_raises_error_on_excessive_length() -> None:
 @pytest.mark.parametrize(
     "requested_length",
     [
-        0,    # Limite inferior / vazio
-        1,    # Menor que um digest
-        16,   # Menor que um digest
-        31,   # Imediatamente menor que um digest
-        32,   # Exatamente o tamanho de um digest SHA3-256
-        33,   # Imediatamente maior que um digest
-        64,   # Exatamente dois digests
-        70,   # Tamanho arbitrário fracionário
-        128,  # Múltiplos digests
+        0,
+        1,
+        16,
+        31,
+        32,
+        33,
+        64,
+        70,
+        128,
     ],
 )
 def test_mask_generation_function_output_length(requested_length: int) -> None:
@@ -51,7 +51,6 @@ def test_mask_generation_function_first_bytes_match_counter_zero_digest() -> Non
     mask_length = 64
     result = mask_generation_function(seed, mask_length)
 
-    # Cálculo manual do primeiro bloco: seed concatenada ao contador 0 em 4 bytes big-endian
     counter_zero = (0).to_bytes(4, byteorder="big")
     expected_first_digest = hashlib.sha3_256(seed + counter_zero).digest()
 
