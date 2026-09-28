@@ -2,7 +2,7 @@ from hashlib import sha3_256
 import secrets
 from src.domain import RSAPrivateKey, RSAPublicKey
 from src.hashing import mask_generation_function
-from src.exceptions import MessageTooLongError
+from src.exceptions import MessageTooLongError, OAEPPaddingError
 
 
 def rsa_oaep_encrypt(message: bytes, public_key: RSAPublicKey, label: bytes = b"") -> bytes:
@@ -28,6 +28,7 @@ def rsa_oaep_encrypt(message: bytes, public_key: RSAPublicKey, label: bytes = b"
         MessageTooLongError: If message does not fit the OAEP padding structure
           for the given key size.
     """
+
     modulus_byte_len = _calculate_modulus_byte_length(public_key)
     hash_output_len = sha3_256().digest_size
     data_block_len = modulus_byte_len - hash_output_len - 1
@@ -42,14 +43,7 @@ def rsa_oaep_encrypt(message: bytes, public_key: RSAPublicKey, label: bytes = b"
     masked_seed = _mask_data(seed, masked_data_block, hash_output_len)
 
     encoded_message = b'\x00' + masked_seed + masked_data_block
-    integer_encoded_message = int.from_bytes(encoded_message, byteorder="big")
-
-    integer_ciphertext = pow(
-        integer_encoded_message,
-        public_key.public_exponent,
-        public_key.modulus
-    )
-    ciphertext = integer_ciphertext.to_bytes(modulus_byte_len, byteorder="big")
+    ciphertext = _rsa_encoding(encoded_message, public_key, modulus_byte_len)
 
     return ciphertext
 
@@ -100,3 +94,11 @@ def _assemble_data_block(label_hash: bytes, message: bytes, data_block_len: int)
 def _mask_data(data: bytes, mask_seed: bytes, mask_length: int):
     mask = mask_generation_function(mask_seed, mask_length)
     return bytes(b1 ^ b2 for b1, b2 in zip(data, mask))
+
+
+def _rsa_encoding(message: bytes, public_key: RSAPublicKey, modulus_byte_length: int) -> bytes:
+    integer_encoded_message = int.from_bytes(message, byteorder="big")
+    integer_ciphertext = pow(integer_encoded_message,
+                             public_key.public_exponent,
+                             public_key.modulus)
+    return integer_ciphertext.to_bytes(modulus_byte_length, byteorder="big")
