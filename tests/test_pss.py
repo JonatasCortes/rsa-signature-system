@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 
 from src.exceptions import PSSVerificationError
@@ -50,6 +52,49 @@ def test_rsa_pss_rejects_modified_signature(rsa_keys):
 
 	with pytest.raises(PSSVerificationError):
 		rsa_pss_verify(b"signed message", modified_signature, public_key)
+
+
+def test_rsa_pss_rejects_modified_signature_in_the_middle(rsa_keys):
+	"""Changing a middle Base64 character invalidates verification."""
+	public_key, private_key = rsa_keys
+	signature = rsa_pss_sign(b"signed message", private_key)
+	mutation_index = len(signature) // 2
+	replacement = "A" if signature[mutation_index] != "A" else "B"
+	modified_signature = (
+		signature[:mutation_index] + replacement + signature[mutation_index + 1 :]
+	)
+
+	with pytest.raises(PSSVerificationError):
+		rsa_pss_verify(b"signed message", modified_signature, public_key)
+
+
+def test_rsa_pss_rejects_invalid_base64(rsa_keys):
+	"""Malformed Base64 input raises the verification-specific exception."""
+	public_key, _ = rsa_keys
+
+	with pytest.raises(PSSVerificationError):
+		rsa_pss_verify(b"message", "not-a-valid-base64-signature!", public_key)
+
+
+def test_rsa_pss_rejects_invalid_verification_inputs(rsa_keys):
+	"""Invalid message and salt arguments use the verification exception."""
+	public_key, _ = rsa_keys
+
+	with pytest.raises(PSSVerificationError):
+		rsa_pss_verify("message", "", public_key)  # type: ignore[arg-type]
+	with pytest.raises(PSSVerificationError):
+		rsa_pss_verify(b"message", "", public_key, salt_length=-1)
+
+
+def test_rsa_pss_rejects_signature_representative_out_of_range(rsa_keys):
+	"""A signature integer equal to the modulus is invalid."""
+	public_key, _ = rsa_keys
+	modulus_length = (public_key.modulus.bit_length() + 7) // 8
+	invalid_signature = public_key.modulus.to_bytes(modulus_length, byteorder="big")
+	signature = base64.b64encode(invalid_signature).decode("ascii")
+
+	with pytest.raises(PSSVerificationError):
+		rsa_pss_verify(b"message", signature, public_key)
 
 
 def test_rsa_pss_rejects_different_public_key(rsa_keys):

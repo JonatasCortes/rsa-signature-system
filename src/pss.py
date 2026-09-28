@@ -25,6 +25,14 @@ def rsa_pss_sign(
 	SHA3-256 is used for both message hashing and MGF1. The signature is
 	returned as Base64 containing exactly one RSA modulus-sized byte string.
 
+	Args:
+		message: The bytes to sign.
+		private_key: The RSA private key used for signing.
+		salt_length: The salt length in bytes. Defaults to 32 bytes.
+
+	Returns:
+		A Base64-encoded RSA-PSS signature.
+
 	Raises:
 		RSASystemError: If the key, message, salt length, or modulus is invalid.
 	"""
@@ -51,6 +59,20 @@ def rsa_pss_verify(
 ) -> bool:
 	"""Verify an RSA-PSS signature for ``message``.
 
+	The encoded message uses ``emBits = modulus_bits - 1`` as required by
+	RFC 8017. This reserves the most significant bit of the encoded block;
+	therefore, ``encoded_length`` is based on ``emBits`` rather than simply
+	the byte length of the modulus.
+
+	Args:
+		message: The original bytes that were signed.
+		signature: The Base64-encoded RSA-PSS signature.
+		public_key: The RSA public key used for verification.
+		salt_length: The expected salt length in bytes. Defaults to 32 bytes.
+
+	Returns:
+		``True`` when the signature is valid.
+
 	Raises:
 		PSSVerificationError: If the signature, key, or PSS encoding is invalid.
 	"""
@@ -72,7 +94,7 @@ def rsa_pss_verify(
 		)
 	except PSSVerificationError:
 		raise
-	except (TypeError, ValueError, OverflowError) as error:
+	except (RSASystemError, TypeError, ValueError, OverflowError) as error:
 		raise PSSVerificationError("Invalid RSA-PSS signature") from error
 
 
@@ -81,6 +103,7 @@ def _encode_message(
 	modulus: int,
 	salt_length: int,
 ) -> tuple[bytes, bytes]:
+	# RFC 8017 reserves one modulus bit so the encoded representative is < n.
 	encoded_length = (modulus.bit_length() - 1 + 7) // 8
 	maximum_salt_length = encoded_length - _HASH_LENGTH - 2
 	if maximum_salt_length < 0 or salt_length > maximum_salt_length:
