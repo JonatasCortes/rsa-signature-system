@@ -34,7 +34,7 @@ def rsa_oaep_encrypt(
     modulus_byte_len = calculate_modulus_byte_length(public_key)
     hash_output_len = sha3_256().digest_size
 
-    validate_length(message, modulus_byte_len, hash_output_len)
+    validate_message_length(message, modulus_byte_len, hash_output_len)
 
     label_hash = sha3_256(label).digest()
 
@@ -70,8 +70,8 @@ def calculate_modulus_byte_length(key: RSAPrivateKey | RSAPublicKey) -> int:
     return (bits + 7) // 8
 
 
-def validate_length(message: bytes, modulus_byte_len: int, hash_output_len: int) -> None:
+def validate_message_length(message: bytes, modulus_byte_len: int, hash_output_len: int) -> None:
     max_length = modulus_byte_len - (2 * hash_output_len) - 2
     if len(message) > max_length:
-        error_message = "message length exceeded maximum"
+        error_message = f"message length ({len(message)}) exceeded maximum ({max_length})"
         raise MessageTooLongError(error_message)
