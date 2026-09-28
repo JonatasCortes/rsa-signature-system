@@ -67,12 +67,43 @@ def rsa_oaep_decrypt(ciphertext: bytes, private_key: RSAPrivateKey, label: bytes
         OAEPPaddingError: If ciphertext does not decode into a structurally
           valid OAEP padded message.
     """
-    ...
 
+    modulus_byte_len = _calculate_modulus_byte_length(private_key)
+    hash_output_len = sha3_256().digest_size
+
+    if len(ciphertext) != modulus_byte_len:
+        raise OAEPPaddingError("invalid message format")
+
+    message = _rsa_decoding(ciphertext, private_key, modulus_byte_len)
+
+    control_byte = message[0:1]
+    masked_seed = message[1:hash_output_len+1]
+    masked_data_block = message[hash_output_len+1:]
+
+    seed = _mask_data(masked_seed, masked_data_block, hash_output_len)
+    data_block = _mask_data(masked_data_block, seed, len(masked_data_block))
+
+    expected_label_hash = sha3_256(label).digest()
+    retrieved_label_hash = data_block[:hash_output_len]
+
+    remaining_data_block = data_block[hash_output_len:]
+    remaining_data_block = remaining_data_block.lstrip(b'\x00')
+
+    original_message = remaining_data_block[1:]
+
+    failed = (control_byte != b'\x00' or
+              retrieved_label_hash != expected_label_hash or
+              remaining_data_block[0:1] != b'\x01')
+
+    if failed:
+        raise OAEPPaddingError("invalid message format")
+
+    return original_message
 
 # ========================== *
 # PRIVATE AUXILIAR FUNCTIONS *
 # ========================== *
+
 
 def _calculate_modulus_byte_length(key: RSAPrivateKey | RSAPublicKey) -> int:
     bits = key.modulus.bit_length()
@@ -102,3 +133,11 @@ def _rsa_encoding(message: bytes, public_key: RSAPublicKey, modulus_byte_length:
                              public_key.public_exponent,
                              public_key.modulus)
     return integer_ciphertext.to_bytes(modulus_byte_length, byteorder="big")
+
+
+def _rsa_decoding(ciphertext: bytes, private_key: RSAPrivateKey, modulus_byte_length: int) -> bytes:
+    integer_ciphertext = int.from_bytes(ciphertext, byteorder="big")
+    integer_message = pow(integer_ciphertext,
+                          private_key.private_exponent,
+                          private_key.modulus)
+    return integer_message.to_bytes(modulus_byte_length, byteorder="big")
