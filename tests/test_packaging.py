@@ -1,10 +1,49 @@
+import base64
+import json
 import pytest
 
-from src.domain import RSAPublicKey, RSAPrivateKey
-from src.exceptions import KeySerializationError
-from src.packaging import export_key_to_pem, import_key_from_pem
+from src.domain import RSAPrivateKey, RSAPublicKey
+from src.exceptions import (
+    KeySerializationError,
+    PackageParsingError,
+    PSSVerificationError,
+)
+from src.packaging import (
+    _compute_fingerprint,
+    create_signed_package,
+    export_key_to_pem,
+    import_key_from_pem,
+    verify_signed_package,
+)
 
 
+# ==========================================
+# Fixtures
+# ==========================================
+@pytest.fixture
+def keys():
+    p = 9518937716437086579525574626553539436527811976271436757628327284357895625164767602128960432609602000999443908630907494022120458687218329356867614189925017
+    q = 10750733966809282649287804883137164312186120721122245017144234864622035252245144825791533673176304447880663638728459192661534777927974936086659689997610703
+    n = p * q
+    e = 65537
+    phi = (p - 1) * (q - 1)
+    d = pow(e, -1, phi)
+
+    public_a = RSAPublicKey(modulus=n, public_exponent=e)
+    private_a = RSAPrivateKey(
+        modulus=n,
+        public_exponent=e,
+        private_exponent=d,
+        first_prime=p,
+        second_prime=q,
+    )
+
+    public_b = RSAPublicKey(modulus=n + 2, public_exponent=e)
+
+    return {"pub_a": public_a, "priv_a": private_a, "pub_b": public_b}
+# ==========================================
+# 1. PEM Export Tests
+# ==========================================
 def test_export_public_key():
     key = RSAPublicKey(modulus=3233, public_exponent=65537)
     expected = (
@@ -129,3 +168,170 @@ def test_import_rejects_corrupted_pem(bad_pem):
 def test_import_rejects_non_string(not_a_string):
     with pytest.raises(KeySerializationError):
         import_key_from_pem(not_a_string)  # type: ignore[arg-type]
+# ==========================================
+# 2. Fingerprint Tests
+# ==========================================
+def test_compute_fingerprint_deterministic(keys):
+    """Ensure identical public keys yield identical 64-character hexadecimal digests."""
+    fp1 = _compute_fingerprint(keys["pub_a"])
+    fp2 = _compute_fingerprint(keys["pub_a"])
+
+    assert fp1 == fp2
+    assert len(fp1) == 64
+    assert isinstance(fp1, str)
+
+
+def test_compute_fingerprint_distinct_keys(keys):
+    """Ensure distinct public keys generate different fingerprints."""
+    fp_a = _compute_fingerprint(keys["pub_a"])
+    fp_b = _compute_fingerprint(keys["pub_b"])
+
+    assert fp_a != fp_b
+
+
+# ==========================================
+# 3. Happy Path (Create and Verify)
+# ==========================================
+def test_create_and_verify_valid_package(keys):
+    """Verify that an untampered signed package validates successfully."""
+    payload = b"Confidential course project payload"
+
+    package_json = create_signed_package(
+        payload=payload,
+        private_key=keys["priv_a"],
+        public_key=keys["pub_a"],
+        salt_length=32,
+    )
+
+    assert verify_signed_package(package_json, keys["pub_a"]) is True
+
+
+def test_create_signed_package_structure(keys):
+    """Validate that the generated JSON contains all required fields and correct values."""
+    payload = b"Hello, World!"
+    package_json = create_signed_package(
+        payload=payload,
+        private_key=keys["priv_a"],
+        public_key=keys["pub_a"],
+    )
+
+    data = json.loads(package_json)
+    expected_fields = {
+        "payload",
+        "digest_algorithm",
+        "signature",
+        "salt_length",
+        "public_key_fingerprint",
+    }
+    assert expected_fields.issubset(data.keys())
+    assert data["digest_algorithm"] == "SHA3-256"
+    assert data["salt_length"] == 32
+    assert data["payload"] == base64.b64encode(payload).decode("utf-8")
+
+
+# ==========================================
+# 4. Error and Tampering Tests
+# ==========================================
+def test_verify_fails_with_wrong_public_key(keys):
+    """Raise PSSVerificationError when public key fingerprint does not match package."""
+    payload = b"Confidential payload"
+    package_json = create_signed_package(
+        payload=payload,
+        private_key=keys["priv_a"],
+        public_key=keys["pub_a"],
+    )
+
+    with pytest.raises(PSSVerificationError):
+        verify_signed_package(package_json, keys["pub_b"])
+
+
+def test_verify_fails_on_tampered_payload(keys):
+    """Raise PSSVerificationError if the payload content is tampered with inside the JSON."""
+    payload = b"Transfer $10.00"
+    package_json = create_signed_package(
+        payload=payload,
+        private_key=keys["priv_a"],
+        public_key=keys["pub_a"],
+    )
+
+    data = json.loads(package_json)
+    data["payload"] = base64.b64encode(b"Transfer $1,000,000.00").decode("utf-8")
+    tampered_json = json.dumps(data)
+
+    with pytest.raises(PSSVerificationError):
+        verify_signed_package(tampered_json, keys["pub_a"])
+
+
+def test_verify_fails_on_tampered_signature(keys):
+    """Raise PSSVerificationError if the signature data has been altered."""
+    payload = b"Authentic document"
+    package_json = create_signed_package(
+        payload=payload,
+        private_key=keys["priv_a"],
+        public_key=keys["pub_a"],
+    )
+
+    data = json.loads(package_json)
+    data["signature"] = base64.b64encode(b"invalid_signature_bytes").decode("utf-8")
+    tampered_json = json.dumps(data)
+
+    with pytest.raises(PSSVerificationError):
+        verify_signed_package(tampered_json, keys["pub_a"])
+
+
+def test_verify_fails_on_invalid_json(keys):
+    """Raise PackageParsingError when input is not valid JSON."""
+    corrupted_json = '{"payload": "abc", "digest_algorithm": "SHA3-256"'
+
+    with pytest.raises(PackageParsingError):
+        verify_signed_package(corrupted_json, keys["pub_a"])
+
+
+def test_verify_fails_on_missing_required_field(keys):
+    """Raise PackageParsingError if any mandatory field is missing from JSON structure."""
+    payload = b"Incomplete structure test"
+    package_json = create_signed_package(
+        payload=payload,
+        private_key=keys["priv_a"],
+        public_key=keys["pub_a"],
+    )
+
+    data = json.loads(package_json)
+    del data["public_key_fingerprint"]
+    incomplete_json = json.dumps(data)
+
+    with pytest.raises(PackageParsingError):
+        verify_signed_package(incomplete_json, keys["pub_a"])
+
+
+def test_verify_fails_on_corrupted_base64_payload(keys):
+    """Raise PackageParsingError when the Base64 payload cannot be decoded."""
+    payload = b"Base64 corruption test"
+    package_json = create_signed_package(
+        payload=payload,
+        private_key=keys["priv_a"],
+        public_key=keys["pub_a"],
+    )
+
+    data = json.loads(package_json)
+    data["payload"] = "!!!InvalidBase64Characters!!!"
+    invalid_b64_json = json.dumps(data)
+
+    with pytest.raises(PackageParsingError):
+        verify_signed_package(invalid_b64_json, keys["pub_a"])
+
+
+@pytest.mark.parametrize("bad_salt_length", ["32", 32.5, True, None])
+def test_verify_fails_on_invalid_salt_length_type(keys, bad_salt_length):
+    """Raise PackageParsingError if salt_length is not strictly an integer."""
+    fake_package = {
+        "payload": "dGVzdGU=",
+        "digest_algorithm": "SHA3-256",
+        "signature": "c2lnbmF0dXJl",
+        "salt_length": bad_salt_length,
+        "public_key_fingerprint": _compute_fingerprint(keys["pub_a"]),
+    }
+    bad_type_json = json.dumps(fake_package)
+
+    with pytest.raises(PackageParsingError):
+        verify_signed_package(bad_type_json, keys["pub_a"])

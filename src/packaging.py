@@ -252,7 +252,7 @@ def verify_signed_package(
     # 5. Cryptographic RSA-PSS verification
     try:
         is_valid = rsa_pss_verify(
-            payload=original_payload,
+            message=original_payload,
             signature=signature_b64,
             public_key=public_key,
             salt_length=salt_length,
