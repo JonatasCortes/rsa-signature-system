@@ -81,7 +81,7 @@ def import_key_from_pem(pem_data: str) -> RSAPublicKey | RSAPrivateKey:
         message_error = "invalid pem_data type"
         raise KeySerializationError(message_error)
 
-    lines = []
+    lines: list[str] = []
     for line in pem_data.splitlines():
         clean = line.strip()
         if clean:
@@ -109,7 +109,7 @@ def import_key_from_pem(pem_data: str) -> RSAPublicKey | RSAPrivateKey:
     if lines[-1] != f"-----END {label}-----":
         raise KeySerializationError("Missing or mismatched PEM footer")
 
-    values = {}
+    values: dict[str, int] = {}
     for line in lines[1:-1]:
         name, sep, b64 = line.partition(":")
         name = name.strip()
