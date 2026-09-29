@@ -15,6 +15,18 @@ def _int_to_b64(n: int) -> str:
     return codified.decode("ascii")
 
 
+def _b64_to_int(text: str) -> int:
+    try:
+        data = base64.b64decode(text, validate=True)
+    except ValueError as exc:
+        raise KeySerializationError("Invalid Base64 in key field") from exc
+    converted_int = int.from_bytes(data, "big")
+    if converted_int == 0:
+        message_error = "Key parameter must be a positive integer"
+        raise KeySerializationError(message_error)
+    return converted_int
+
+
 def export_key_to_pem(key: RSAPublicKey | RSAPrivateKey) -> str:
     """
     Export an RSA public or private key to a PEM-formatted string using Base64 encoding.
@@ -65,7 +77,59 @@ def import_key_from_pem(pem_data: str) -> RSAPublicKey | RSAPrivateKey:
     Raises:
         KeySerializationError: If the PEM data is malformed or unreadable.
     """
-    ...
+    if not isinstance(pem_data, str):
+        message_error = "invalid pem_data type"
+        raise KeySerializationError(message_error)
+
+    lines = []
+    for line in pem_data.splitlines():
+        clean = line.strip()
+        if clean:
+            lines.append(clean)
+
+    if len(lines) < 3:
+        raise KeySerializationError("PEM data is too short")
+
+    key_types = (
+        ("RSA PUBLIC KEY",
+         ("modulus", "public_exponent"),
+         RSAPublicKey),
+        ("RSA PRIVATE KEY",
+         ("modulus", "public_exponent", "private_exponent",
+          "first_prime", "second_prime"),
+         RSAPrivateKey),
+    )
+
+    for label, fields, key_class in key_types:
+        if lines[0] == f"-----BEGIN {label}-----":
+            break
+    else:
+        raise KeySerializationError("Missing or unknown PEM header")
+
+    if lines[-1] != f"-----END {label}-----":
+        raise KeySerializationError("Missing or mismatched PEM footer")
+
+    values = {}
+    for line in lines[1:-1]:
+        name, sep, b64 = line.partition(":")
+        name = name.strip()
+        b64 = b64.strip()
+        if not sep or not b64:
+            raise KeySerializationError("Malformed PEM field line")
+        if name not in fields:
+            raise KeySerializationError(f"Unexpected PEM field: {name}")
+        if name in values:
+            raise KeySerializationError(f"Duplicate PEM field: {name}")
+        values[name] = _b64_to_int(b64)
+
+    if set(values) != set(fields):
+        raise KeySerializationError("PEM fields do not match the key type")
+
+    try:
+        return key_class(**values)
+    except (TypeError, ValueError) as exc:
+        raise KeySerializationError(
+            "Could not build key from PEM data") from exc
 
 
 def _compute_fingerprint(public_key: RSAPublicKey) -> str:
