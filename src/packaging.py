@@ -1,3 +1,8 @@
+import hashlib
+import json
+import base64
+from src.pss import rsa_pss_sign, rsa_pss_verify
+from src.exceptions import PackageParsingError, PSSVerificationError
 from src.domain import RSAPublicKey, RSAPrivateKey, SignedPackage
 
 def export_key_to_pem(key: RSAPublicKey | RSAPrivateKey) -> str:
@@ -32,6 +37,14 @@ def import_key_from_pem(pem_data: str) -> RSAPublicKey | RSAPrivateKey:
     ...
 
 
+def _compute_fingerprint(public_key: RSAPublicKey) -> str:
+    """
+    Compute the hexadecimal fingerprint of the public key using SHA3-256
+    over the concatenation of the string values of modulus and public exponent.
+    """
+    data = str(public_key.modulus).encode("utf-8") + str(public_key.public_exponent).encode("utf-8")
+    return hashlib.sha3_256(data).hexdigest()
+
 def create_signed_package(
     payload: bytes,
     private_key: RSAPrivateKey,
@@ -51,7 +64,40 @@ def create_signed_package(
     Returns:
         str: A serialized JSON string representing the SignedPackage.
     """
-    ...
+    
+    # 1. Compute the public key fingerprint
+    fingerprint = _compute_fingerprint(public_key)
+
+    # 2. Generate digital signature via RSA-PSS (returns Base64 string)
+    signature_b64 = rsa_pss_sign(payload, private_key, salt_length)
+
+    # 3. Convert the original payload bytes to Base64
+    payload_b64 = base64.b64encode(payload).decode("utf-8")
+
+    # 4. Instantiate SignedPackage object or equivalent dictionary
+    # If SignedPackage is a dataclass or standard class:
+    package = SignedPackage(
+        payload=payload_b64,
+        digest_algorithm="SHA3-256",
+        signature=signature_b64,
+        salt_length=salt_length,
+        public_key_fingerprint=fingerprint,
+    )
+
+    # 5. Serialize package to JSON
+    # If SignedPackage has a .to_dict() method or __dict__:
+    if hasattr(package, "__dict__"):
+        package_dict = package.__dict__
+    else:
+        package_dict = {
+            "payload": package.payload,
+            "digest_algorithm": package.digest_algorithm,
+            "signature": package.signature,
+            "salt_length": package.salt_length,
+            "public_key_fingerprint": package.public_key_fingerprint,
+        }
+
+    return json.dumps(package_dict, ensure_ascii=False)
 
 
 def verify_signed_package(
@@ -72,4 +118,54 @@ def verify_signed_package(
         PackageParsingError: If the package structure cannot be parsed.
         PSSVerificationError: If the signature is invalid or tampered with.
     """
-    ...
+    
+    # 1. JSON parsing and structural validation
+    try:
+        data = json.loads(package_data)
+        if not isinstance(data, dict):
+            raise PackageParsingError("Package content is not a valid JSON object.")
+        
+        required_fields = {
+            "payload",
+            "digest_algorithm",
+            "signature",
+            "salt_length",
+            "public_key_fingerprint",
+        }
+        if not required_fields.issubset(data.keys()):
+            raise PackageParsingError("Incomplete JSON package: missing required fields.")
+
+        payload_b64 = data["payload"]
+        signature_b64 = data["signature"]
+        salt_length = data["salt_length"]
+        package_fingerprint = data["public_key_fingerprint"]
+
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise PackageParsingError(f"Failed to parse package: {exc}") from exc
+
+    # 2. Public key fingerprint validation
+    expected_fingerprint = _compute_fingerprint(public_key)
+    if package_fingerprint != expected_fingerprint:
+        raise PSSVerificationError(
+            "Provided public key fingerprint does not match the signed package."
+        )
+
+    # 3. Decode Base64 payload back to bytes
+    try:
+        original_payload = base64.b64decode(payload_b64, validate=True)
+    except Exception as exc:
+        raise PackageParsingError(f"Corrupted or invalid Base64 payload: {exc}") from exc
+
+    # 4. RSA-PSS signature verification
+    # rsa_pss_verify validates whether the signature matches the payload
+    is_valid = rsa_pss_verify(
+        payload=original_payload,
+        signature=signature_b64,
+        public_key=public_key,
+        salt_length=salt_length,
+    )
+
+    if not is_valid:
+        raise PSSVerificationError("Invalid signature: content or signature has been tampered with.")
+
+    return True
