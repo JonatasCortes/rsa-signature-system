@@ -2,8 +2,18 @@ import hashlib
 import json
 import base64
 from src.pss import rsa_pss_sign, rsa_pss_verify
-from src.exceptions import PackageParsingError, PSSVerificationError
+from src.exceptions import PackageParsingError, PSSVerificationError, KeySerializationError
 from src.domain import RSAPublicKey, RSAPrivateKey, SignedPackage
+
+
+def _int_to_b64(n: int) -> str:
+    if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+        raise KeySerializationError("Key parameter must be a positive integer")
+    length = (n.bit_length() + 7) // 8
+    data = n.to_bytes(length, "big")
+    codified = base64.b64encode(data)
+    return codified.decode("ascii")
+
 
 def export_key_to_pem(key: RSAPublicKey | RSAPrivateKey) -> str:
     """
@@ -18,7 +28,28 @@ def export_key_to_pem(key: RSAPublicKey | RSAPrivateKey) -> str:
     Raises:
         KeySerializationError: If the key structure is invalid or export fails.
     """
-    ...
+    if isinstance(key, RSAPublicKey):
+        label = "RSA PUBLIC KEY"
+        fields = ("modulus", "public_exponent")
+    elif isinstance(key, RSAPrivateKey):
+        label = "RSA PRIVATE KEY"
+        fields = ("modulus", "public_exponent", "private_exponent",
+                  "first_prime", "second_prime")
+    else:
+        message_error = "Key structure is invalid"
+        raise KeySerializationError(message_error)
+
+    try:
+        lines = [f"-----BEGIN {label}-----"]
+        for name in fields:
+            number = getattr(key, name)
+            b64 = _int_to_b64(number)
+            lines.append(f"{name}: {b64}")
+        lines.append(f"-----END {label}-----")
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        raise KeySerializationError("Failed to export key") from exc
+
+    return "\n".join(lines) + "\n"
 
 
 def import_key_from_pem(pem_data: str) -> RSAPublicKey | RSAPrivateKey:
@@ -42,8 +73,10 @@ def _compute_fingerprint(public_key: RSAPublicKey) -> str:
     Compute the hexadecimal fingerprint of the public key using SHA3-256
     over the concatenation of the string values of modulus and public exponent.
     """
-    data = str(public_key.modulus).encode("utf-8") + str(public_key.public_exponent).encode("utf-8")
+    data = str(public_key.modulus).encode("utf-8") + \
+        str(public_key.public_exponent).encode("utf-8")
     return hashlib.sha3_256(data).hexdigest()
+
 
 def create_signed_package(
     payload: bytes,
@@ -64,7 +97,7 @@ def create_signed_package(
     Returns:
         str: A serialized JSON string representing the SignedPackage.
     """
-    
+
     # 1. Compute the public key fingerprint
     fingerprint = _compute_fingerprint(public_key)
 
@@ -118,13 +151,14 @@ def verify_signed_package(
         PackageParsingError: If the package structure cannot be parsed.
         PSSVerificationError: If the signature is invalid or tampered with.
     """
-    
+
     # 1. JSON parsing and structural validation
     try:
         data = json.loads(package_data)
         if not isinstance(data, dict):
-            raise PackageParsingError("Package content is not a valid JSON object.")
-        
+            raise PackageParsingError(
+                "Package content is not a valid JSON object.")
+
         required_fields = {
             "payload",
             "digest_algorithm",
@@ -133,7 +167,8 @@ def verify_signed_package(
             "public_key_fingerprint",
         }
         if not required_fields.issubset(data.keys()):
-            raise PackageParsingError("Incomplete JSON package: missing required fields.")
+            raise PackageParsingError(
+                "Incomplete JSON package: missing required fields.")
 
         payload_b64 = data["payload"]
         signature_b64 = data["signature"]
@@ -154,7 +189,8 @@ def verify_signed_package(
     try:
         original_payload = base64.b64decode(payload_b64, validate=True)
     except Exception as exc:
-        raise PackageParsingError(f"Corrupted or invalid Base64 payload: {exc}") from exc
+        raise PackageParsingError(
+            f"Corrupted or invalid Base64 payload: {exc}") from exc
 
     # 4. RSA-PSS signature verification
     # rsa_pss_verify validates whether the signature matches the payload
@@ -166,6 +202,7 @@ def verify_signed_package(
     )
 
     if not is_valid:
-        raise PSSVerificationError("Invalid signature: content or signature has been tampered with.")
+        raise PSSVerificationError(
+            "Invalid signature: content or signature has been tampered with.")
 
     return True
