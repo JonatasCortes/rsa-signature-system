@@ -137,7 +137,7 @@ def _compute_fingerprint(public_key: RSAPublicKey) -> str:
     Compute the hexadecimal fingerprint of the public key using SHA3-256
     over the concatenation of the string values of modulus and public exponent.
     """
-    data = str(public_key.modulus).encode("utf-8") + str(public_key.public_exponent).encode("utf-8")
+    data = f"{public_key.modulus}:{public_key.public_exponent}".encode("ascii")
     return hashlib.sha3_256(data).hexdigest()
 
 
