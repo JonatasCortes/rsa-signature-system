@@ -1,3 +1,16 @@
+"""
+Probabilistic Prime Number Generation and Primality Testing.
+
+This module provides cryptographic-grade prime generation utilities using
+secure random numbers and the Miller-Rabin probabilistic primality test.
+It is primarily designed to support asymmetric cryptography algorithms
+such as RSA by generating large probable primes.
+
+Functions:
+    generate_prime_number: Generates a probable prime of a specified bit length.
+    is_probable_prime: Tests a candidate integer for primality using Miller-Rabin.
+"""
+
 import secrets
 from src.exceptions import PrimeGenerationError
 
