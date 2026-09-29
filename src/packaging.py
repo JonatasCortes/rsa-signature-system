@@ -73,8 +73,7 @@ def _compute_fingerprint(public_key: RSAPublicKey) -> str:
     Compute the hexadecimal fingerprint of the public key using SHA3-256
     over the concatenation of the string values of modulus and public exponent.
     """
-    data = str(public_key.modulus).encode("utf-8") + \
-        str(public_key.public_exponent).encode("utf-8")
+    data = str(public_key.modulus).encode("utf-8") + str(public_key.public_exponent).encode("utf-8")
     return hashlib.sha3_256(data).hexdigest()
 
 
@@ -98,37 +97,23 @@ def create_signed_package(
         str: A serialized JSON string representing the SignedPackage.
     """
 
-    # 1. Compute the public key fingerprint
+    # 1. Compute fingerprint
     fingerprint = _compute_fingerprint(public_key)
 
-    # 2. Generate digital signature via RSA-PSS (returns Base64 string)
+    # 2. Generate RSA-PSS signature (returns Base64 string)
     signature_b64 = rsa_pss_sign(payload, private_key, salt_length)
 
-    # 3. Convert the original payload bytes to Base64
+    # 3. Encode payload bytes to Base64 string
     payload_b64 = base64.b64encode(payload).decode("utf-8")
 
-    # 4. Instantiate SignedPackage object or equivalent dictionary
-    # If SignedPackage is a dataclass or standard class:
-    package = SignedPackage(
-        payload=payload_b64,
-        digest_algorithm="SHA3-256",
-        signature=signature_b64,
-        salt_length=salt_length,
-        public_key_fingerprint=fingerprint,
-    )
-
-    # 5. Serialize package to JSON
-    # If SignedPackage has a .to_dict() method or __dict__:
-    if hasattr(package, "__dict__"):
-        package_dict = package.__dict__
-    else:
-        package_dict = {
-            "payload": package.payload,
-            "digest_algorithm": package.digest_algorithm,
-            "signature": package.signature,
-            "salt_length": package.salt_length,
-            "public_key_fingerprint": package.public_key_fingerprint,
-        }
+    # 4. Construct dictionary directly to preserve typing contracts
+    package_dict = {
+        "payload": payload_b64,
+        "digest_algorithm": "SHA3-256",
+        "signature": signature_b64,
+        "salt_length": salt_length,
+        "public_key_fingerprint": fingerprint,
+    }
 
     return json.dumps(package_dict, ensure_ascii=False)
 
@@ -152,57 +137,68 @@ def verify_signed_package(
         PSSVerificationError: If the signature is invalid or tampered with.
     """
 
-    # 1. JSON parsing and structural validation
+    # 1. Parse JSON structure
     try:
         data = json.loads(package_data)
-        if not isinstance(data, dict):
-            raise PackageParsingError(
-                "Package content is not a valid JSON object.")
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise PackageParsingError(f"Failed to parse package as JSON: {exc}") from exc
 
-        required_fields = {
-            "payload",
-            "digest_algorithm",
-            "signature",
-            "salt_length",
-            "public_key_fingerprint",
-        }
-        if not required_fields.issubset(data.keys()):
-            raise PackageParsingError(
-                "Incomplete JSON package: missing required fields.")
+    if not isinstance(data, dict):
+        raise PackageParsingError("Package content is not a valid JSON object.")
 
-        payload_b64 = data["payload"]
-        signature_b64 = data["signature"]
-        salt_length = data["salt_length"]
-        package_fingerprint = data["public_key_fingerprint"]
+    # 2. Field presence & strict type validations
+    required_fields = {
+        "payload",
+        "digest_algorithm",
+        "signature",
+        "salt_length",
+        "public_key_fingerprint",
+    }
+    if not required_fields.issubset(data.keys()):
+        raise PackageParsingError("Incomplete JSON package: missing required fields.")
 
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise PackageParsingError(f"Failed to parse package: {exc}") from exc
+    if not isinstance(data["payload"], str):
+        raise PackageParsingError("Field 'payload' must be a string.")
+    if not isinstance(data["signature"], str):
+        raise PackageParsingError("Field 'signature' must be a string.")
+    # Exclude bool since bool is an instance of int in Python
+    if not isinstance(data["salt_length"], int) or isinstance(data["salt_length"], bool):
+        raise PackageParsingError("Field 'salt_length' must be an integer.")
+    if not isinstance(data["public_key_fingerprint"], str):
+        raise PackageParsingError("Field 'public_key_fingerprint' must be a string.")
 
-    # 2. Public key fingerprint validation
+    payload_b64 = data["payload"]
+    signature_b64 = data["signature"]
+    salt_length = data["salt_length"]
+    package_fingerprint = data["public_key_fingerprint"]
+
+    # 3. Validate public key fingerprint (fail-fast)
     expected_fingerprint = _compute_fingerprint(public_key)
     if package_fingerprint != expected_fingerprint:
         raise PSSVerificationError(
             "Provided public key fingerprint does not match the signed package."
         )
 
-    # 3. Decode Base64 payload back to bytes
+    # 4. Decode Base64 payload
     try:
         original_payload = base64.b64decode(payload_b64, validate=True)
     except Exception as exc:
-        raise PackageParsingError(
-            f"Corrupted or invalid Base64 payload: {exc}") from exc
+        raise PackageParsingError(f"Corrupted or invalid Base64 payload: {exc}") from exc
 
-    # 4. RSA-PSS signature verification
-    # rsa_pss_verify validates whether the signature matches the payload
-    is_valid = rsa_pss_verify(
-        payload=original_payload,
-        signature=signature_b64,
-        public_key=public_key,
-        salt_length=salt_length,
-    )
+    # 5. Cryptographic RSA-PSS verification
+    try:
+        is_valid = rsa_pss_verify(
+            payload=original_payload,
+            signature=signature_b64,
+            public_key=public_key,
+            salt_length=salt_length,
+        )
+    except PSSVerificationError:
+        raise
+    except Exception as exc:
+        raise PSSVerificationError(f"Signature verification failed: {exc}") from exc
 
     if not is_valid:
-        raise PSSVerificationError(
-            "Invalid signature: content or signature has been tampered with.")
+        raise PSSVerificationError("Invalid signature: content or signature has been tampered with.")
 
     return True
