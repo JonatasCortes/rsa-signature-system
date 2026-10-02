@@ -16,9 +16,12 @@ Exit codes:
     1: the operation failed (invalid signature, malformed input, etc.).
 """
 
+from __future__ import annotations
+
 import argparse
 import base64
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 from src.domain import RSAPrivateKey, RSAPublicKey
@@ -34,6 +37,17 @@ from src.packaging import (
 
 EXIT_OK = 0
 EXIT_FAIL = 1
+
+PUBLIC_KEY_NAME = "public.pem"
+PRIVATE_KEY_NAME = "private.pem"
+DEFAULT_KEY_DIR = "keys"
+DEFAULT_KEY_BITS = 2048
+DEFAULT_SALT_LENGTH = 32
+
+
+# ================= *
+# COMMAND HANDLERS  *
+# ================= *
 
 
 def cmd_keygen(args: argparse.Namespace) -> int:
@@ -56,13 +70,14 @@ def cmd_keygen(args: argparse.Namespace) -> int:
     print(f"Generating a {args.bits}-bit RSA key pair...")
     public_key, private_key = generate_key_pair(bit_length=args.bits)
 
-    _write_text(out_dir / "public.pem",
-                export_key_to_pem(public_key), args.force)
-    _write_text(out_dir / "private.pem",
-                export_key_to_pem(private_key), args.force)
+    public_path = out_dir / PUBLIC_KEY_NAME
+    private_path = out_dir / PRIVATE_KEY_NAME
 
-    print(f"Public key:  {out_dir / 'public.pem'}")
-    print(f"Private key: {out_dir / 'private.pem'}")
+    _write_text(public_path, export_key_to_pem(public_key), args.force)
+    _write_text(private_path, export_key_to_pem(private_key), args.force)
+
+    print(f"Public key:  {public_path}")
+    print(f"Private key: {private_path}")
     print("WARNING: the private key is stored without a password. Do not share it.")
     return EXIT_OK
 
@@ -89,7 +104,8 @@ def cmd_sign(args: argparse.Namespace) -> int:
         public_key = _load_public_key(args.pub)
     else:
         public_key = RSAPublicKey(
-            private_key.modulus, private_key.public_exponent)
+            private_key.modulus, private_key.public_exponent
+        )
 
     payload = Path(args.file).read_bytes()
     package = create_signed_package(
@@ -153,8 +169,7 @@ def cmd_encrypt(args: argparse.Namespace) -> int:
     encoded = base64.b64encode(ciphertext).decode("ascii")
     _write_text(Path(args.out), encoded + "\n", args.force)
 
-    print(
-        f"Message encrypted with RSA-OAEP. Base64 output saved to {args.out}")
+    print(f"Message encrypted with RSA-OAEP. Base64 output saved to {args.out}")
     return EXIT_OK
 
 
@@ -191,25 +206,9 @@ def cmd_decrypt(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def main() -> int:
-    """
-    Parse the command line and run the selected subcommand.
-
-    Returns:
-        int: EXIT_OK on success, EXIT_FAIL if any expected error occurs.
-    """
-    args = _build_parser().parse_args()
-    try:
-        return args.func(args)
-    except RSASystemError as error:
-        print(f"ERROR: {error}", file=sys.stderr)
-    except OSError as error:
-        print(f"FILE ERROR: {error}", file=sys.stderr)
-    return EXIT_FAIL
-
-# ========================== *
-# PRIVATE AUXILIAR FUNCTIONS *
-# ========================== *
+# ================ *
+# ARGUMENT PARSER  *
+# ================ *
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -218,45 +217,83 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    keygen = subparsers.add_parser(
-        "keygen", help="generate an RSA key pair (PEM)")
-    keygen.add_argument("--out-dir", default="keys")
-    keygen.add_argument("--bits", type=int, default=2048)
-    keygen.add_argument("--force", action="store_true", help="overwrite files")
-    keygen.set_defaults(func=cmd_keygen)
-
-    sign = subparsers.add_parser("sign", help="sign a file (RSA-PSS)")
-    sign.add_argument("--key", required=True, help="private key (PEM)")
-    sign.add_argument(
-        "--pub", help="public key (PEM); derived from the private key if omitted")
-    sign.add_argument("--file", required=True, help="file to sign")
-    sign.add_argument("--out", required=True, help="signed package (JSON)")
-    sign.add_argument("--salt-length", type=int, default=32)
-    sign.add_argument("--force", action="store_true")
-    sign.set_defaults(func=cmd_sign)
-
-    verify = subparsers.add_parser("verify", help="verify a signed package")
-    verify.add_argument("--pub", required=True, help="public key (PEM)")
-    verify.add_argument("--package", required=True,
-                        help="signed package (JSON)")
-    verify.set_defaults(func=cmd_verify)
-
-    encrypt = subparsers.add_parser(
-        "encrypt", help="encrypt a short message (RSA-OAEP)")
-    encrypt.add_argument("--pub", required=True)
-    encrypt.add_argument("--in", dest="infile", required=True)
-    encrypt.add_argument("--out", required=True)
-    encrypt.add_argument("--force", action="store_true")
-    encrypt.set_defaults(func=cmd_encrypt)
-
-    decrypt = subparsers.add_parser(
-        "decrypt", help="decrypt a message (RSA-OAEP)")
-    decrypt.add_argument("--key", required=True)
-    decrypt.add_argument("--in", dest="infile", required=True)
-    decrypt.add_argument("--out", help="print to stdout if omitted")
-    decrypt.set_defaults(func=cmd_decrypt)
-
+    _add_keygen_parser(subparsers)
+    _add_sign_parser(subparsers)
+    _add_verify_parser(subparsers)
+    _add_encrypt_parser(subparsers)
+    _add_decrypt_parser(subparsers)
     return parser
+
+
+def _add_force_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--force", action="store_true",
+        help="overwrite output files if they already exist",
+    )
+
+
+def _add_keygen_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    p = subparsers.add_parser("keygen", help="generate an RSA key pair (PEM)")
+    p.add_argument("--out-dir", default=DEFAULT_KEY_DIR,
+                   help="folder where the PEM files are saved")
+    p.add_argument("--bits", type=int, default=DEFAULT_KEY_BITS,
+                   help="RSA modulus size in bits")
+    _add_force_flag(p)
+    p.set_defaults(func=cmd_keygen)
+
+
+def _add_sign_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    p = subparsers.add_parser("sign", help="sign a file (RSA-PSS)")
+    p.add_argument("--key", required=True, help="private key (PEM)")
+    p.add_argument("--pub",
+                   help="public key (PEM); derived from --key if omitted")
+    p.add_argument("--file", required=True, help="file to sign")
+    p.add_argument("--out", required=True, help="signed package (JSON)")
+    p.add_argument("--salt-length", type=int, default=DEFAULT_SALT_LENGTH,
+                   help="PSS salt length in bytes")
+    _add_force_flag(p)
+    p.set_defaults(func=cmd_sign)
+
+
+def _add_verify_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    p = subparsers.add_parser("verify", help="verify a signed package")
+    p.add_argument("--pub", required=True, help="public key (PEM)")
+    p.add_argument("--package", required=True, help="signed package (JSON)")
+    p.set_defaults(func=cmd_verify)
+
+
+def _add_encrypt_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    p = subparsers.add_parser("encrypt", help="encrypt a short message (RSA-OAEP)")
+    p.add_argument("--pub", required=True, help="recipient's public key (PEM)")
+    p.add_argument("--in", dest="infile", required=True,
+                   help="file with the message to encrypt")
+    p.add_argument("--out", required=True, help="output file (Base64 text)")
+    _add_force_flag(p)
+    p.set_defaults(func=cmd_encrypt)
+
+
+def _add_decrypt_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    p = subparsers.add_parser("decrypt", help="decrypt a message (RSA-OAEP)")
+    p.add_argument("--key", required=True, help="private key (PEM)")
+    p.add_argument("--in", dest="infile", required=True,
+                   help="file with the Base64 ciphertext")
+    p.add_argument("--out", help="output file; prints to stdout if omitted")
+    p.set_defaults(func=cmd_decrypt)
+
+
+# ============ *
+# FILE HELPERS *
+# ============ *
 
 
 def _load_public_key(path: str) -> RSAPublicKey:
@@ -275,9 +312,34 @@ def _load_private_key(path: str) -> RSAPrivateKey:
 
 def _write_text(path: Path, content: str, force: bool = False) -> None:
     if path.exists() and not force:
-        raise RSASystemError(
-            f"{path} already exists (use --force to overwrite)")
+        raise RSASystemError(f"{path} already exists (use --force to overwrite)")
     path.write_text(content, encoding="utf-8")
+
+
+# ===== *
+# MAIN  *
+# ===== *
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """
+    Parse the command line and run the selected subcommand.
+
+    Args:
+        argv (Sequence[str] | None): Arguments to parse. Uses sys.argv[1:]
+            when omitted, which lets tests call main(["verify", ...]) directly.
+
+    Returns:
+        int: EXIT_OK on success, EXIT_FAIL if any expected error occurs.
+    """
+    args = _build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except RSASystemError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+    except OSError as error:
+        print(f"FILE ERROR: {error}", file=sys.stderr)
+    return EXIT_FAIL
 
 
 if __name__ == "__main__":
