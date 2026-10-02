@@ -19,7 +19,7 @@ RSA key generation, RSA arithmetic, OAEP, or PSS.
 From the repository root, create and activate a virtual environment:
 
 ```bash
-python3.14 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 ```
 
@@ -156,23 +156,6 @@ integrity protection, so it must not be used directly for messages. RSA-OAEP
 adds randomized padding for encryption. RSA-PSS adds a randomized salt and
 probabilistic encoding for digital signatures. These schemes address different
 security goals and should not be substituted for one another.
-# RSA-digital-signature
-
-With python 3.14 installed, run:
-
-```Bash
-python -m venv .venv
-```
-
-```Bash
-.\.venv\Scripts\activate # Windows
-
-source .venv/bin/activate # Linux / Mac
-```
-
-```Bash
-pip install -r requirements.txt
-```
 
 
 
